@@ -1,0 +1,1 @@
+celery -A d3_bakcend.celery.celeryCenter worker --pool=solo --loglevel=INFO

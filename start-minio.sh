@@ -1,0 +1,1 @@
+MINIO_ROOT_USER=rainy MINIO_ROOT_PASSWORD=wang120638 minio server /usr/local/minio-resource --console-address ":9001"
