@@ -233,6 +233,7 @@ class ProjectFilesGraph:
         self.edges = edges
         self.matrix = self.get_adjacency_matrix()
         self.inDegrees = np.sum(self.matrix, axis=0)
+        self.outDegrees = np.sum(self.matrix, axis=1)
         self.adjacency_table = [np.nonzero(self.matrix[i]) for i in range(self.length)]
 
     def get_adjacency_matrix(self):
@@ -257,3 +258,7 @@ class ProjectFilesGraph:
                     if self.inDegrees[i] == 0:
                         queue.append(i)
         return cnt != self.length
+
+    def longest_path_layering(self):
+        levels = {1: np.where(self.outDegrees == 0)}
+        print(levels)

@@ -174,7 +174,7 @@ def post_catelogueTreeMapDatas_data(origin_df, root_id, structure_file):
     df_drop = df[df['end'] == False]
     df_merge = pd.merge(df, origin_df, on='qualifiedName')
     df_result = df_drop.append(df_merge)
-    df_result['color'].fillna('C0C0C0', inplace=True)
+    df_result['color'].fillna('#C0C0C0', inplace=True)
     df_result['id'] = df_result['id'].astype(int)
     df_result['relation'].fillna(json.dumps(dict()), inplace=True)
     df_result['structure_file'] = structure_file
