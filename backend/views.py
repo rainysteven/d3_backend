@@ -91,8 +91,8 @@ class ProjectFilesViewSet(FilesViewSet):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         parent_file_dict = dict([(item['file_name'], item['id']) for item in serializer.data])
-        storeProjectFiles.delay(ori_file, data['file_name'], parent_file_dict, channel_id)
-        # dataUtil.post_projectFiles_data(ori_file, file_name, parent_file_dict, channel_id)
+        # storeProjectFiles.delay(ori_file, data['file_name'], parent_file_dict, channel_id)
+        dataUtil.post_projectFiles_data(ori_file, data['file_name'], parent_file_dict, channel_id)
         return APIResponse(HTTP_201_CREATED, 'create success',
                            data={'name': data['file_name'], 'type': data['file_extension'], 'url': url})
 
@@ -167,6 +167,36 @@ class CatelogueTreeMapDatasViewSet(GenericViewSet):
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
+        data = self.serialize_tree(queryset)
+        return APIResponse(HTTP_200_OK, 'list success', data)
+
+
+class ClusterDatasFilter(BaseFilterBackend):
+    def filter_queryset(self, request, queryset, view):
+        structure_file = int(request.query_params.get('structure_file'))
+        return queryset.filter(Q(cluster=0) & Q(structure_file_id=structure_file))
+
+
+class ClusterDatasViewSet(GenericViewSet):
+    queryset = models.ClusterDatas.objects.all()
+    serializer_class_list = [serializers.ClusterDatasReadRootSerializer,
+                             serializers.ClusterDatasReadTypeSerializer,
+                             serializers.ClusterReadFileSerializer]
+    filter_backends = [ClusterDatasFilter]
+
+    def get_serializer_class_from_list(self, item):
+        return self.serializer_class_list[item.cluster](item)
+
+    def serialize_tree(self, queryset):
+        for obj in queryset:
+            data = self.get_serializer_class_from_list(obj).data
+            if obj.cluster != 2:
+                data['children'] = self.serialize_tree(obj.children.all())
+            yield data
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        print(queryset)
         data = self.serialize_tree(queryset)
         return APIResponse(HTTP_200_OK, 'list success', data)
 

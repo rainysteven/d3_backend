@@ -138,6 +138,34 @@ class CatelogueTreeMapDatasWriteRootSerializer(serializers.ModelSerializer):
         fields = ['name', 'children']
 
 
+class ClusterDatasSerializer(serializers.ModelSerializer):
+    relation = JsonSerializer()
+
+    class Meta:
+        model = models.ClusterDatas
+        fields = '__all__'
+
+
+class ClusterReadFileSerializer(serializers.ModelSerializer):
+    relation = JsonSerializer()
+
+    class Meta:
+        model = models.ClusterDatas
+        fields = ['name', 'color', 'relation', 'value']
+
+
+class ClusterDatasReadTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.ClusterDatas
+        fields = ['name', 'color', 'children']
+
+
+class ClusterDatasReadRootSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.ClusterDatas
+        fields = ['name', 'children']
+
+
 class SubSectionFilesReadSerializer(serializers.ModelSerializer):
     class Meta:
         model = models.SectionFiles

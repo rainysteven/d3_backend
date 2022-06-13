@@ -75,12 +75,6 @@ class CatelogueAttributes(CommonAttribute):
                                 verbose_name='依赖变化',
                                 null=True,
                                 blank=True)
-    parent_catelogue = models.ForeignKey(to='self',
-                                         on_delete=models.CASCADE,
-                                         null=True,
-                                         blank=True,
-                                         verbose_name='父类目录',
-                                         related_name='children')
     structure_file = models.ForeignKey(ProjectFiles,
                                        on_delete=models.CASCADE,
                                        null=True,
@@ -99,6 +93,12 @@ class CatelogueDatas(CatelogueAttributes):
     )
     changeLoc = models.IntegerField(default=0, verbose_name='修改频率', null=True)
     value = models.FloatField(default=0.0, verbose_name='半径', null=True)
+    parent_catelogue = models.ForeignKey(to='self',
+                                         on_delete=models.CASCADE,
+                                         null=True,
+                                         blank=True,
+                                         verbose_name='父类目录',
+                                         related_name='children')
     catelogue_type = models.SmallIntegerField(choices=CATELOGUE_TYPE,
                                               verbose_name='目录级别',
                                               default=1,
@@ -122,6 +122,12 @@ class CatelogueTreeMapDatas(CatelogueAttributes):
                                      verbose_name='文件完整名称',
                                      null=True,
                                      blank=True)
+    parent_catelogue = models.ForeignKey(to='self',
+                                         on_delete=models.CASCADE,
+                                         null=True,
+                                         blank=True,
+                                         verbose_name='父类目录',
+                                         related_name='children')
     catelogue_type = models.SmallIntegerField(verbose_name='目录级别',
                                               default=1,
                                               null=False)
@@ -131,6 +137,29 @@ class CatelogueTreeMapDatas(CatelogueAttributes):
         verbose_name = '目录树状数据表'
         verbose_name_plural = verbose_name
         ordering = ['id']
+
+
+class ClusterDatas(CatelogueAttributes):
+    changeLoc = models.IntegerField(default=0, verbose_name='修改频率', null=True)
+    value = models.FloatField(default=0.0, verbose_name='半径', null=True)
+    parent_node = models.ForeignKey(to='self',
+                                    on_delete=models.CASCADE,
+                                    null=True,
+                                    blank=True,
+                                    verbose_name='父类结点',
+                                    related_name='children')
+    cluster = models.SmallIntegerField(verbose_name='目录级别',
+                                       default=0,
+                                       null=False)
+
+    class Meta:
+        db_table = '聚类数据表'
+        verbose_name = '聚类数据'
+        verbose_name_plural = verbose_name
+        ordering = ['id']
+
+    def __str__(self):
+        return self.name
 
 
 def sectionFiles_folder_path(instance, file_name):

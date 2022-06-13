@@ -1,15 +1,19 @@
+import copy
 import json
+import itertools
 import os
 import re
 import numpy as np
 import pandas as pd
 import backend.utils.fileUtil as fileUtil
-from backend.utils.dataStructure import ProjectFilesTrieTree, SectionFilesTrieTree
+from backend.utils.dataStructure import ProjectFilesTrieTree, SectionFilesTrieTree, UnionFind
 from django.conf import settings
 from asgiref.sync import async_to_sync
 from backend import models
 from backend import serializers
 from channels.layers import get_channel_layer
+
+CLUSTER_TYPES_LIST = ['Central', 'Core', 'Control', 'Shared', 'Peripheral']
 
 
 def get_projectFiles_data(contents, parent_pk_dict):
@@ -30,99 +34,181 @@ def get_projectFiles_data(contents, parent_pk_dict):
 
 
 def post_projectFiles_data(ori_file, file_name, parent_file_dict, channel_id):
-    channels_layer = get_channel_layer()
-    send_dict = {
-        "type": "send.message",
-        "message": {
-            'percent': 50,
-            'uploadStatus': 'normal',
-        }
-    }
-    structure_file_status = []
-    number = 0
-    try:
-        file = models.ProjectFiles.objects.get(id=ori_file).file.file
-        contents = fileUtil.un_zip_projectFile(file, file_name)
-        projectFiles_data = get_projectFiles_data(contents, parent_file_dict)
-        serializer = serializers.ProjectFilesSerializer(data=projectFiles_data,
-                                                        many=True)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        df_structure = pd.DataFrame(contents.get('structure'))
-        df_relation = pd.DataFrame(contents.get('relation'))
-        df_relation['file_name'] = df_relation['file_name'].apply(
-            lambda x: x.replace('-out', ''))
-        df_structure = pd.merge(df_structure, df_relation, on=['file_name'])
-        structure_file_list = list(
-            filter(
-                lambda x: x['parent_file'] == parent_file_dict.get(
-                    'structure'), serializer.data))
-        for structure_file in structure_file_list:
-            serializer = serializers.CatelogueDatasSerializer(
-                data={
-                    'name':
+    file = models.ProjectFiles.objects.get(id=ori_file).file.file
+    contents = fileUtil.un_zip_projectFile(file, file_name)
+    projectFiles_data = get_projectFiles_data(contents, parent_file_dict)
+    serializer = serializers.ProjectFilesSerializer(data=projectFiles_data,
+                                                    many=True)
+    serializer.is_valid(raise_exception=True)
+    serializer.save()
+    df_structure = pd.DataFrame(contents.get('structure'))
+    df_relation = pd.DataFrame(contents.get('relation'))
+    df_relation['file_name'] = df_relation['file_name'].apply(
+        lambda x: x.replace('-out', ''))
+    df_structure = pd.merge(df_structure, df_relation, on=['file_name'])
+    structure_file_list = list(
+        filter(
+            lambda x: x['parent_file'] == parent_file_dict.get(
+                'structure'), serializer.data))
+    for structure_file in structure_file_list:
+        serializer = serializers.CatelogueDatasSerializer(
+            data={
+                'name':
                     structure_file.get('file_name').replace(
                         '{}_'.format(file_name), ''),
-                    'structure_file':
+                'structure_file':
                     structure_file.get('id')
-                })
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-            parent_pk = serializer.data['id']
+            })
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        parent_pk = serializer.data['id']
 
-            temp_name = '{}.json'.format(structure_file.get('file_name'))
-            index = df_structure[df_structure['file_name'] ==
-                                 temp_name].index.tolist()[0]
-            structure_content = df_structure.at[index, 'file_x']
-            relation_content = df_structure.at[index, 'file_y']
+        temp_name = '{}.json'.format(structure_file.get('file_name'))
+        index = df_structure[df_structure['file_name'] ==
+                             temp_name].index.tolist()[0]
+        structure_content = df_structure.at[index, 'file_x']
+        relation_content = df_structure.at[index, 'file_y']
+        serializer = serializers.CatelogueTreeMapDatasSerializer(
+            data={
+                'name': 'root',
+                'structure_file': structure_file['id'],
+                'value': [],
+                'relation': json.dumps({})
+            })
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        root_pk = serializer.data['id']
+        count_content = models.ProjectFiles.objects.filter(
+            parent_file=parent_file_dict.get('count')).first()
+        serializer = serializers.ClusterDatasSerializer(
+            data={'name': 'root', 'cluster': 0, 'relation': json.dumps({}), 'structure_file': structure_file['id']})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        cluster_root_pk = serializer.data['id']
+        result, cluster_data, tree_data = post_catelogueDatas_data(
+            structure_content, count_content, relation_content, parent_pk,
+            root_pk, structure_file.get('id'), cluster_root_pk)
+        serializer = serializers.SubCatelogueDatasSerializer(data=result,
+                                                             many=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        for selector in cluster_data:
+            serializer = serializers.ClusterDatasSerializer(data=selector[0])
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            serializer = serializers.ClusterDatasSerializer(data=selector[1:], many=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+        for selector in tree_data:
             serializer = serializers.CatelogueTreeMapDatasSerializer(
-                data={
-                    'name': 'root',
-                    'structure_file': structure_file['id'],
-                    'value': [],
-                    'relation': json.dumps({})
-                })
+                data=selector, many=True)
             serializer.is_valid(raise_exception=True)
             serializer.save()
-            root_pk = serializer.data['id']
-            count_content = models.ProjectFiles.objects.filter(
-                parent_file=parent_file_dict.get('count')).first()
-            result, tree_data = post_catelogueDatas_data(
-                structure_content, count_content, relation_content, parent_pk,
-                root_pk, structure_file.get('id'))
-            serializer = serializers.SubCatelogueDatasSerializer(data=result,
-                                                                 many=True)
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-            for selector in tree_data:
-                serializer = serializers.CatelogueTreeMapDatasSerializer(
-                    data=selector, many=True)
-                serializer.is_valid(raise_exception=True)
-                serializer.save()
-            structure_file_status.append(structure_file.get('id'))
-            number += 1
-            send_dict = {
-                "type": "send.message",
-                "message": {
-                    'percent': 50 + number / len(structure_file_list) * 50,
-                    'uploadStatus': 'uploading',
-                }
-            }
-            async_to_sync(channels_layer.group_send)(channel_id, send_dict)
-        send_dict['message']['uploadStatus'] = 'success'
-        async_to_sync(channels_layer.group_send)(channel_id, send_dict)
-    except Exception:
-        send_dict['message']['uploadStatus'] = 'error'
-        async_to_sync(channels_layer.group_send)(channel_id, send_dict)
-    finally:
-        send_dict['message']['uploadStatus'] = 'closed'
-        async_to_sync(channels_layer.group_send)(channel_id, send_dict)
-        models.ProjectFiles.objects.filter(
-            id__in=structure_file_status).update(status=True)
+    # channels_layer = get_channel_layer()
+    # send_dict = {
+    #     "type": "send.message",
+    #     "message": {
+    #         'percent': 50,
+    #         'uploadStatus': 'normal',
+    #     }
+    # }
+    # structure_file_status = []
+    # number = 0
+    # try:
+    #     file = models.ProjectFiles.objects.get(id=ori_file).file.file
+    #     contents = fileUtil.un_zip_projectFile(file, file_name)
+    #     projectFiles_data = get_projectFiles_data(contents, parent_file_dict)
+    #     serializer = serializers.ProjectFilesSerializer(data=projectFiles_data,
+    #                                                     many=True)
+    #     serializer.is_valid(raise_exception=True)
+    #     serializer.save()
+    #     df_structure = pd.DataFrame(contents.get('structure'))
+    #     df_relation = pd.DataFrame(contents.get('relation'))
+    #     df_relation['file_name'] = df_relation['file_name'].apply(
+    #         lambda x: x.replace('-out', ''))
+    #     df_structure = pd.merge(df_structure, df_relation, on=['file_name'])
+    #     structure_file_list = list(
+    #         filter(
+    #             lambda x: x['parent_file'] == parent_file_dict.get(
+    #                 'structure'), serializer.data))
+    #     for structure_file in structure_file_list:
+    #         serializer = serializers.CatelogueDatasSerializer(
+    #             data={
+    #                 'name':
+    #                     structure_file.get('file_name').replace(
+    #                         '{}_'.format(file_name), ''),
+    #                 'structure_file':
+    #                     structure_file.get('id')
+    #             })
+    #         serializer.is_valid(raise_exception=True)
+    #         serializer.save()
+    #         parent_pk = serializer.data['id']
+    #
+    #         temp_name = '{}.json'.format(structure_file.get('file_name'))
+    #         index = df_structure[df_structure['file_name'] ==
+    #                              temp_name].index.tolist()[0]
+    #         structure_content = df_structure.at[index, 'file_x']
+    #         relation_content = df_structure.at[index, 'file_y']
+    #         serializer = serializers.CatelogueTreeMapDatasSerializer(
+    #             data={
+    #                 'name': 'root',
+    #                 'structure_file': structure_file['id'],
+    #                 'value': [],
+    #                 'relation': json.dumps({})
+    #             })
+    #         serializer.is_valid(raise_exception=True)
+    #         serializer.save()
+    #         root_pk = serializer.data['id']
+    #         count_content = models.ProjectFiles.objects.filter(
+    #             parent_file=parent_file_dict.get('count')).first()
+    #         serializer = serializers.ClusterDatasSerializer(
+    #              data={'name': 'root', 'cluster': 0, 'relation': json.dumps({}), 'structure_file': structure_file['id']})
+    #         serializer.is_valid(raise_exception=True)
+    #         serializer.save()
+    #         cluster_root_pk = serializer.data['id']
+    #         result, cluster_data, tree_data = post_catelogueDatas_data(
+    #             structure_content, count_content, relation_content, parent_pk,
+    #             root_pk, structure_file.get('id'), cluster_root_pk)
+    #         serializer = serializers.SubCatelogueDatasSerializer(data=result,
+    #                                                              many=True)
+    #         serializer.is_valid(raise_exception=True)
+    #         serializer.save()
+    #         for selector in cluster_data:
+    #             serializer = serializers.ClusterDatasSerializer(data=selector[0])
+    #             serializer.is_valid(raise_exception=True)
+    #             serializer.save()
+    #             serializer = serializers.ClusterDatasSerializer(data=selector[1:], many=True)
+    #             serializer.is_valid(raise_exception=True)
+    #             serializer.save()
+    #         for selector in tree_data:
+    #             serializer = serializers.CatelogueTreeMapDatasSerializer(
+    #                 data=selector, many=True)
+    #             serializer.is_valid(raise_exception=True)
+    #             serializer.save()
+    #         structure_file_status.append(structure_file.get('id'))
+    #         number += 1
+    #         send_dict = {
+    #             "type": "send.message",
+    #             "message": {
+    #                 'percent': 50 + number / len(structure_file_list) * 50,
+    #                 'uploadStatus': 'uploading',
+    #             }
+    #         }
+    #         async_to_sync(channels_layer.group_send)(channel_id, send_dict)
+    #     send_dict['message']['uploadStatus'] = 'success'
+    #     async_to_sync(channels_layer.group_send)(channel_id, send_dict)
+    # except Exception:
+    #     send_dict['message']['uploadStatus'] = 'error'
+    #     async_to_sync(channels_layer.group_send)(channel_id, send_dict)
+    # finally:
+    #     send_dict['message']['uploadStatus'] = 'closed'
+    #     async_to_sync(channels_layer.group_send)(channel_id, send_dict)
+    #     models.ProjectFiles.objects.filter(
+    #         id__in=structure_file_status).update(status=True)
 
 
 def post_catelogueDatas_data(project_file, count_file, relation_file,
-                             parent_id, root_id, structure_file):
+                             parent_id, root_id, structure_file, cluster_root_pk):
     json_object = json.loads(project_file.file.getvalue())
     df_count = pd.read_csv(count_file.file.url)
 
@@ -131,7 +217,7 @@ def post_catelogueDatas_data(project_file, count_file, relation_file,
         'filename': 'name',
         'changeloc': 'changeLoc'
     },
-                    inplace=True)
+        inplace=True)
     df_project = pd.DataFrame({'name': json_object['variables']})
     df_project['name'] = df_project['name'].apply(
         lambda x: re.sub(r'(.+)base/', '', x.replace('\\', '/')))
@@ -148,6 +234,12 @@ def post_catelogueDatas_data(project_file, count_file, relation_file,
     df_merge['value'] = df_merge['changeLoc'].apply(
         lambda x: get_value_by_changeLoc(x))
 
+    df_cells = pd.DataFrame([{
+        'id': selector[0],
+        'source': selector[1]['src'],
+        'target': selector[1]['dest'],
+    } for selector in enumerate(json_object['cells'])])
+
     # 读取依赖文件
     df_relation = get_relation_result_df(relation_file)
     df_drop = df_merge.append(df_relation).drop_duplicates(['name'],
@@ -157,9 +249,10 @@ def post_catelogueDatas_data(project_file, count_file, relation_file,
     df_result.sort_index(ignore_index=True, inplace=True)
     df_result.fillna(json.dumps(dict()), inplace=True)
     df_result['catelogue_type'] = df_result['catelogue_type'].astype(int)
+    cluster_data_list = post_cluster_data(df_result, df_cells, structure_file, cluster_root_pk)
     tree_data_list = post_catelogueTreeMapDatas_data(df_result, root_id,
                                                      structure_file)
-    return df_result.to_dict(orient='records'), tree_data_list
+    return df_result.to_dict(orient='records'), cluster_data_list, tree_data_list
 
 
 def post_catelogueTreeMapDatas_data(origin_df, root_id, structure_file):
@@ -184,6 +277,65 @@ def post_catelogueTreeMapDatas_data(origin_df, root_id, structure_file):
         for selector in list(df_result.groupby(['catelogue_type']))
     ]
     return groupby_list
+
+
+def post_cluster_data(df_nodes, df_edges, structure_file, cluster_root_pk):
+    count = cluster_root_pk
+    matrix = get_adjacency_matrix(df_nodes, df_edges)
+    matrix = warshall(matrix)  # 可达性矩阵
+    items = figure_matrix(matrix)  # 度量
+    df = pd.DataFrame(items)
+    df.sort_values(by=['VFI', 'VFO'], ascending=(False, True),
+                   inplace=True)  # VFI降序,VFO升序排列
+    group_list = judge_group(df, matrix)
+    datas = {'VFI': [], 'VFO': [], 'length': []}
+    for group in group_list:
+        datas.get('VFI').append(int(df.at[group[0], 'VFI']))
+        datas.get('VFO').append(int(df.at[group[0], 'VFO']))
+        datas.get('length').append(len(group))
+    architecture_type = architecture_classify(datas)
+    type_list = element_classify(architecture_type, datas, group_list)
+    df_nodes['cluster_type'] = type_list
+    df_nodes['groupNumber'] = get_group_number(df_nodes.index.to_list(), group_list)
+    nodes_groupby_list = list(df_nodes.groupby(by=['cluster_type']))
+    temp_list, result_list = dict([(item, []) for item in CLUSTER_TYPES_LIST]), []
+    for item in nodes_groupby_list:
+        cluster_type = item[0]
+        # 按groupNumber聚类
+        group_number_list = list(item[1].groupby(by=['groupNumber']))
+        # 对groupNumber重新索引至每个类别下
+        group_number_list = dict(
+            map(lambda x: (x[1][0], x[0] + 1), enumerate(group_number_list)))
+        item[1]['groupNumber'] = item[1]['groupNumber'].apply(
+            lambda x: group_number_list.get(x))
+        item[1].apply(lambda x: temp_list.get(cluster_type).append(x.to_dict()), axis=1)
+
+    def appendFunc(df_temp, count):
+        df_temp.reset_index(inplace=True)
+        number = count + 1
+        temp = []
+        temp.append(
+            {'id': number, 'cluster': 1, 'name': item[0], 'parent_node': cluster_root_pk, 'relation': json.dumps({}),
+             'structure_file': structure_file})
+        df_temp['id'] = df_temp.index.to_list()
+        df_temp['id'] = df_temp['id'].apply(lambda x: x + number + 1)
+        df_temp['cluster'] = 2
+        df_temp['parent_node'] = number
+        number = df_temp['id'].tail(1).to_list()[0]
+        temp.extend(df_temp.to_dict(orient='record'))
+        result_list.append(temp)
+        return number
+
+    for item in temp_list.items():
+        if item[0] != 'Peripheral' and len(item[1]):
+            count = appendFunc(pd.DataFrame(item[1]), count)
+        elif item[0] == 'Peripheral' and len(item[1]):
+            peripheral_groupby_list = list(
+                pd.DataFrame(item[1]).groupby(by=['groupNumber']))
+            for selector in peripheral_groupby_list:
+                df_temp = selector[1]
+                count = appendFunc(df_temp, count)
+    return result_list
 
 
 def get_value_by_changeLoc(number, time=100):
@@ -264,6 +416,167 @@ def get_color_by_changeLoc(number):
     return color_list[index]
 
 
+# 获得邻接矩阵
+def get_adjacency_matrix(df_nodes, df_edges):
+    size = df_nodes.shape[0]
+    matrix = np.zeros((size, size), dtype=int)
+    for index, row in df_edges.iterrows():
+        source = row['source']
+        target = row['target']
+        if source < size and target < size:
+            matrix[source][target] = 1
+    return matrix
+
+
+# warshall算法求可达性矩阵
+def warshall(matrix):
+    length = len(matrix)
+    for i in range(length):
+        for j in range(length):
+            if matrix[j][i] == 1:
+                for k in range(length):
+                    matrix[j, k] += matrix[i, k]
+    for i in range(length):
+        for j in range(length):
+            if i == j and matrix[i][j] == 0:
+                matrix[i][j] = 1
+    matrix = np.int64(matrix > 0)
+    return matrix
+
+
+# 计算矩阵中每个元素的VFI和VFO
+def figure_matrix(matrix):
+    items = [{
+        'VFI': np.sum(matrix[:, i]),
+        'VFO': np.sum(matrix[i, :])
+    } for i in range(len(matrix))]
+    return items
+
+
+# 寻找循环群
+def judge_group(df, matrix):
+    # 获取重复值index
+    not_duplicated_indexes = df.drop_duplicates(keep=False).index.to_list()
+    df_duplicated = df[df.duplicated(keep=False)]
+    groupby_list = df_duplicated.groupby(
+        list(df_duplicated)).apply(lambda x: tuple(x.index)).tolist()
+    group_list = copy.deepcopy(groupby_list)
+    # 算法(2),(3)
+    judge_list0 = [np.all(matrix[i, :][:, i] == 1) for i in groupby_list]
+    # 算法(4)
+    for selector in list(
+            itertools.filterfalse(lambda x: x[1] != False,
+                                  zip(group_list, judge_list0))):
+        group_list.remove(selector[0])
+        # 求两步的结果
+        two_combine = list(itertools.combinations(selector[0], 2))
+        temp = [get_sub_matrix(matrix, item) for item in two_combine]
+        if len(list(itertools.filterfalse(lambda x: x[1] != False,
+                                          temp))) == len(two_combine):
+            group_list.extend([(item,) for item in selector[0]])
+        else:
+            temps = [
+                item[0] for item in list(
+                    itertools.filterfalse(lambda x: x[1] == False, temp))
+            ]
+            items = dict(
+                (selector[0][i], i + 1) for i in range(len(selector[0])))
+            items_reverse = dict(
+                (i + 1, selector[0][i]) for i in range(len(selector[0])))
+            union = UnionFind(len(selector[0]))
+            for temp in temps:
+                union.union(items.get(temp[0]), items.get(temp[1]))
+            set_list = {}
+            for i, x in enumerate(union.uf):
+                if x <= -1 and i in items_reverse.keys():
+                    set_list[i] = [items_reverse.get(i)]
+            for i, x in enumerate(union.uf):
+                if x >= 0 and i in items_reverse.keys():
+                    set_list.get(x).append(items_reverse.get(i))
+            set_list = list(map(tuple, set_list.values()))
+            group_list.extend(set_list)
+    group_list.extend([(index,) for index in not_duplicated_indexes])
+    return group_list
+
+
+# 获取子矩阵
+def get_sub_matrix(matrix, index_list):
+    return index_list, np.all(matrix[index_list, :][:, index_list] == 1)
+
+
+# 判断架构类型
+def architecture_classify(datas):
+    temp = copy.deepcopy(datas)
+    sum_group = sum(temp.get('length'))
+    max_group = float(max(temp.get('length')))
+    not_duplicated_list = list(set(temp.get('length')))
+    not_duplicated_list.remove(max_group)
+    try:
+        second_max_group = float(max(not_duplicated_list))
+    except ValueError:
+        second_max_group = 0
+    if max_group <= sum_group * 0.04:
+        return 'Hierarchiacal'
+    elif max_group <= second_max_group * 1.5:
+        return 'Multi-core'
+    elif max_group <= sum_group * 0.06:
+        return 'Borderline Core-periphery'
+    else:
+        return 'Core-periphery'
+
+
+# 判断文件类型
+def element_classify(architecture_type, datas, group_list):
+    element_type = ''
+    type_list = [''] * sum(datas.get('length'))
+    if architecture_type in ['Borderline Core-periphery', 'Core-periphery']:
+        max_index = datas.get('length').index(max(datas.get('length')))
+        VFI_core = datas.get('VFI')[max_index]
+        VFO_core = datas.get('VFO')[max_index]
+        for index, group in enumerate(group_list):
+            VFI = datas.get('VFI')[index]
+            VFO = datas.get('VFO')[index]
+            if index != max_index:
+                if VFI >= VFI_core and VFO < VFO_core:
+                    element_type = 'Shared'
+                elif VFI < VFI_core and VFO < VFO_core:
+                    element_type = 'Peripheral'
+                elif VFI < VFI_core and VFO > VFO_core:
+                    element_type = 'Control'
+            else:
+                element_type = 'Core'
+            for i in group:
+                type_list[i] = element_type
+    else:
+        VFI_median = np.median(datas.get('VFI'))
+        VFO_median = np.median(datas.get('VFO'))
+        for index, group in enumerate(group_list):
+            VFI = datas.get('VFI')[index]
+            VFO = datas.get('VFO')[index]
+            if VFI >= VFI_median and VFO < VFO_median:
+                element_type = 'Shared'
+            elif VFI >= VFI_median and VFO >= VFO_median:
+                element_type = 'Central'
+            elif VFI < VFI_median and VFO < VFO_median:
+                element_type = 'Peripheral'
+            elif VFI < VFO_median <= VFO:
+                element_type = 'Control'
+            for i in group:
+                type_list[i] = element_type
+    return type_list
+
+
+# 获取每个节点的群号
+def get_group_number(items, group_list):
+    group_number_list = []
+    for item in items:
+        for index, group in enumerate(group_list):
+            if item in group:
+                group_number_list.append(index)
+                break
+    return group_number_list
+
+
 def get_section_data(selector, df_node_list, df_edge_list):
     temp_list = [[], []]
     df_list = []
@@ -276,23 +589,23 @@ def get_section_data(selector, df_node_list, df_edge_list):
             else:
                 temp_list[1].append({
                     'source':
-                    items['src']['id'],
+                        items['src']['id'],
                     'sourceFile':
-                    items['src']['File'],
+                        items['src']['File'],
                     'sourcePackageName':
-                    items['src']['packageName'],
+                        items['src']['packageName'],
                     'sourceIsHonor':
-                    items['src']['not_aosp'],
+                        items['src']['not_aosp'],
                     'target':
-                    items['dest']['id'],
+                        items['dest']['id'],
                     'targetFile':
-                    items['dest']['File'],
+                        items['dest']['File'],
                     'targetPackageName':
-                    items['dest']['packageName'],
+                        items['dest']['packageName'],
                     'targetIsHonor':
-                    items['dest']['not_aosp'],
+                        items['dest']['not_aosp'],
                     'value':
-                    list(items['values'].keys())[0]
+                        list(items['values'].keys())[0]
                 })
     for temp in temp_list:
         df = pd.DataFrame(temp)
@@ -351,13 +664,13 @@ def post_sectionFiles_data(ori_file, channel_id):
             'id': '_id',
             'not_aosp': 'isHonor'
         },
-                        inplace=True)
+            inplace=True)
         df_nodes['_global'] = df_nodes['global']
         df_nodes.drop(['global'], axis=1, inplace=True)
         df_nodes['modifiers'] = df_nodes['modifiers'].where(
             df_nodes['modifiers'].notnull(), 'default')
         df_nodes['modifiers'] = df_nodes['modifiers'].apply(lambda x: 'default'
-                                                            if x == '' else x)
+        if x == '' else x)
         df_nodes = df_nodes.where(df_nodes.notnull(), None)
         df_nodes['origin_file_id'] = ori_file
         df_nodes.drop_duplicates(subset=['_id'], keep='first', inplace=True)
