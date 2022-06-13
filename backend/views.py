@@ -77,7 +77,7 @@ class ProjectFilesViewSet(FilesViewSet):
         return APIResponse(HTTP_200_OK, 'list success', serializer.data)
 
     def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
+        instance = self.queryset.filter(Q(id=kwargs.get('pk'))).first()
         serializer = self.get_serializer(instance)
         return APIResponse(HTTP_200_OK, 'retrieve success', serializer.data)
 
@@ -196,7 +196,6 @@ class ClusterDatasViewSet(GenericViewSet):
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
-        print(queryset)
         data = self.serialize_tree(queryset)
         return APIResponse(HTTP_200_OK, 'list success', data)
 
@@ -236,10 +235,10 @@ class SectionFilesViewSet(FilesViewSet):
         data = self.serialize_tree(queryset)
         return APIResponse(HTTP_200_OK, 'list success', data)
 
-    # def retrieve(self, request, *args, **kwargs):
-    #     instance = self.get_object()
-    #     serializer = self.get_serializer(instance)
-    #     return APIResponse(HTTP_200_OK, 'retrieve success', serializer.data)
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.queryset.filter(Q(id=kwargs.get('pk'))).first()
+        serializer = self.get_serializer(instance)
+        return APIResponse(HTTP_200_OK, 'retrieve success', serializer.data)
 
     def create(self, request, *args, **kwargs):
         channel_id = request.query_params.get('channel_id')
