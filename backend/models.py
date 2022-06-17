@@ -91,6 +91,7 @@ class CatelogueDatas(CatelogueAttributes):
         (1, '一级目录'),
         (2, '二级目录'),
     )
+    _id = models.IntegerField(default=0, verbose_name='原始ID', null=True)
     changeLoc = models.IntegerField(default=0, verbose_name='修改频率', null=True)
     value = models.FloatField(default=0.0, verbose_name='半径', null=True)
     parent_catelogue = models.ForeignKey(to='self',
@@ -103,6 +104,11 @@ class CatelogueDatas(CatelogueAttributes):
                                               verbose_name='目录级别',
                                               default=1,
                                               null=False)
+    cells = models.CharField(default='',
+                             max_length=3000,
+                             verbose_name='依赖情况',
+                             null=True,
+                             blank=True)
 
     class Meta:
         db_table = '目录数据表'
@@ -160,6 +166,30 @@ class ClusterDatas(CatelogueAttributes):
 
     def __str__(self):
         return self.name
+
+
+class ProjectFileEdges(CommonAttribute):
+    source = models.IntegerField(default=0, null=False)
+    target = models.IntegerField(default=0, null=False)
+    values = models.CharField(default='',
+                              max_length=200,
+                              verbose_name='依赖类型',
+                              null=True,
+                              blank=True)
+    structure_file = models.ForeignKey(ProjectFiles,
+                                       on_delete=models.CASCADE,
+                                       null=True,
+                                       blank=True,
+                                       verbose_name='结构文件')
+
+    class Meta:
+        db_table = '代码依赖边表'
+        verbose_name = '代码依赖边'
+        verbose_name_plural = verbose_name
+        ordering = ['id']
+
+        def __str__(self):
+            return self.id
 
 
 def sectionFiles_folder_path(instance, file_name):

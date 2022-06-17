@@ -200,6 +200,18 @@ class ClusterDatasViewSet(GenericViewSet):
         return APIResponse(HTTP_200_OK, 'list success', data)
 
 
+class ProjectFileEdgesViewSet(GenericViewSet):
+    queryset = models.ProjectFileEdges.objects.all()
+    serializer_class = serializers.ProjectFileEdgesSerializer
+    filter_backends = (DjangoFilterBackend, filters.SearchFilter)
+    filter_fields = ['structure_file_id']
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True)
+        return APIResponse(HTTP_200_OK, 'list success', serializer.data)
+
+
 class SectionFilesFilter(BaseFilterBackend):
     def filter_queryset(self, request, queryset, view):
         is_delete = False if request.query_params.get('is_delete') == 'false' else True

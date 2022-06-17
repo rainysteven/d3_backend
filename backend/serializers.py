@@ -82,6 +82,7 @@ class SubCatelogueDatasSerializer(serializers.ModelSerializer):
         self.fields['parent_catelogue'].write_only = True
         self.fields['catelogue_type'].write_only = True
 
+    cells = JsonSerializer()
     relation = JsonSerializer()
 
     class Meta:
@@ -151,19 +152,27 @@ class ClusterReadFileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = models.ClusterDatas
-        fields = ['name', 'color', 'relation', 'value']
+        fields = ['id', 'name', 'color', 'relation', 'value']
 
 
 class ClusterDatasReadTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = models.ClusterDatas
-        fields = ['name', 'color', 'children']
+        fields = ['id', 'name', 'color', 'children']
 
 
 class ClusterDatasReadRootSerializer(serializers.ModelSerializer):
     class Meta:
         model = models.ClusterDatas
-        fields = ['name', 'children']
+        fields = ['id', 'name', 'children']
+
+
+class ProjectFileEdgesSerializer(serializers.ModelSerializer):
+    values = JsonSerializer()
+
+    class Meta:
+        model = models.ProjectFileEdges
+        fields = ['source', 'target', 'values']
 
 
 class SubSectionFilesReadSerializer(serializers.ModelSerializer):

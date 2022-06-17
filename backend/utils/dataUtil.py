@@ -85,11 +85,14 @@ def post_projectFiles_data(ori_file, file_name, parent_file_dict, channel_id):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         cluster_root_pk = serializer.data['id']
-        result, cluster_data, tree_data = post_catelogueDatas_data(
+        result, edges_result, cluster_data, tree_data = post_catelogueDatas_data(
             structure_content, count_content, relation_content, parent_pk,
             root_pk, structure_file.get('id'), cluster_root_pk)
         serializer = serializers.SubCatelogueDatasSerializer(data=result,
                                                              many=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        serializer = serializers.ProjectFileEdgesSerializer(data=edges_result, many=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         for selector in cluster_data:
@@ -233,12 +236,16 @@ def post_catelogueDatas_data(project_file, count_file, relation_file,
     df_merge['structure_file'] = structure_file
     df_merge['value'] = df_merge['changeLoc'].apply(
         lambda x: get_value_by_changeLoc(x))
+    df_merge['_id'] = df_merge.index.to_list()
+    df_merge['_id'] = df_merge['_id'].astype(int)
 
     df_cells = pd.DataFrame([{
         'id': selector[0],
         'source': selector[1]['src'],
         'target': selector[1]['dest'],
+        'values': json.dumps(selector[1]['values'])
     } for selector in enumerate(json_object['cells'])])
+    df_cells['structure_file'] = structure_file
 
     # 读取依赖文件
     df_relation = get_relation_result_df(relation_file)
@@ -249,10 +256,16 @@ def post_catelogueDatas_data(project_file, count_file, relation_file,
     df_result.sort_index(ignore_index=True, inplace=True)
     df_result.fillna(json.dumps(dict()), inplace=True)
     df_result['catelogue_type'] = df_result['catelogue_type'].astype(int)
+    cells_groupby_dict = dict([(selector[0],
+                                dict((item.get('target'), json.loads(item.get('values'))) for item in
+                                     selector[1].loc[:, ['target', 'values']].to_dict(orient='records')))
+                               for selector in list(df_cells.groupby(by=['source']))])
+    df_result['cells'] = df_result['_id'].apply(lambda x: json.dumps(cells_groupby_dict.get(x)))
+    df_result['cells'].fillna(json.dumps({}), inplace=True)
     cluster_data_list = post_cluster_data(df_result, df_cells, structure_file, cluster_root_pk)
     tree_data_list = post_catelogueTreeMapDatas_data(df_result, root_id,
                                                      structure_file)
-    return df_result.to_dict(orient='records'), cluster_data_list, tree_data_list
+    return df_result.to_dict(orient='records'), df_cells.to_dict(orient='records'), cluster_data_list, tree_data_list
 
 
 def post_catelogueTreeMapDatas_data(origin_df, root_id, structure_file):
